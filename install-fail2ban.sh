@@ -35,14 +35,22 @@ detect_admin_ip() {
         ips=$(echo "$SSH_CONNECTION" | awk '{print $3}')
     fi
     
-    # 方法2: 本机外网IP（通过curl获取）
+    # 方法2: 本机外网IP（curl/wget 自适应）
     if [ -z "$ips" ]; then
-        ips=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
+        if command -v curl >/dev/null 2>&1; then
+            ips=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
+        elif command -v wget >/dev/null 2>&1; then
+            ips=$(wget -qO- --timeout=5 https://api.ipify.org 2>/dev/null || true)
+        fi
     fi
     
     # 方法3: 本机IPv6
     if [ -z "$ips" ]; then
-        ips=$(curl -s --max-time 5 https://api64.ipify.org 2>/dev/null || true)
+        if command -v curl >/dev/null 2>&1; then
+            ips=$(curl -s --max-time 5 https://api64.ipify.org 2>/dev/null || true)
+        elif command -v wget >/dev/null 2>&1; then
+            ips=$(wget -qO- --timeout=5 https://api64.ipify.org 2>/dev/null || true)
+        fi
     fi
     
     # 方法4: 本机内网IP
