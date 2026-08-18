@@ -12,9 +12,12 @@ bash <(curl -sL https://raw.githubusercontent.com/zounew1978-pixel/server-tools/
 
 # 纯净 Debian（无 curl，用 wget）
 bash <(wget -qO- https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
+
+# 纯净 Debian 王者版（连 wget 都没有）
+apt-get update -qq && apt-get install -y -qq curl && bash <(curl -sL https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
 ```
 
-> 💡 **纯净系统兼容**：脚本内置自检，若 curl/wget 都没有，会自动 apt 安装 curl 后继续，无需手动干预。
+> 💡 **纯净系统兼容**：脚本内置自检，若 curl 或 wget 都没有，会自动 apt 安装 curl 后继续。但入口拉取脚本本身就需要下载工具，所以最纯净的系统需要先 `apt-get install curl` 一步。
 
 ## 功能一览
 

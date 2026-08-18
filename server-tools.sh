@@ -4,6 +4,7 @@
 # 一键装载：Fail2ban 防护 + iptables 端口管理
 # 用法: bash <(curl -sL https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
 # 或:   bash <(wget -qO- https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
+# 纯Debian(无curl/wget): apt-get update -qq && apt-get install -y -qq curl && bash <(curl -sL ...)
 # 编写: 绝尘 (Hermes Agent)
 # 版本: v1.1 — 2026-08-18 (纯净系统兼容)
 # ==============================================================================
