@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 绝尘服务器安全工具集 (Server Tools)
+# 绝尘盾 (Server Shield) — 服务器安全工具集
 # 一键装载：Fail2ban 防护 + iptables 端口管理
 # 用法: bash <(curl -sL https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
+# 或:   bash <(wget -qO- https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
 # 编写: 绝尘 (Hermes Agent)
-# 版本: v1.0 — 2026-08-18
+# 版本: v1.1 — 2026-08-18 (纯净系统兼容)
 # ==============================================================================
-set -e
+set -eo pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -22,11 +23,48 @@ log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# ── 环境自检：确保 curl / wget 至少有一个可用的 HTTP 客户端 ──
+ensure_http_client() {
+    if command -v curl >/dev/null 2>&1; then
+        HTTP_GET="curl -s --max-time 5"
+    elif command -v wget >/dev/null 2>&1; then
+        HTTP_GET="wget -qO- --timeout=5"
+    else
+        log_warn "未检测到 curl / wget，尝试自动安装 curl..."
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1 || true
+            apt-get install -y -qq curl >/dev/null 2>&1 || {
+                log_error "自动安装 curl 失败，请手动执行: apt-get install -y curl"
+                exit 1
+            }
+            HTTP_GET="curl -s --max-time 5"
+        else
+            log_error "既无 curl 也无 wget，且系统不是 apt 系，无法自动安装。"
+            log_error "请先手动安装 curl 后重试。"
+            exit 1
+        fi
+    fi
+    log_info "HTTP 客户端: $(echo "$HTTP_GET" | awk '{print $1}')"
+}
+
 # 检查 root
 if [ "$EUID" -ne 0 ]; then
     log_error "请以 root 身份运行（sudo bash）"
     exit 1
 fi
+
+ensure_http_client
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 公共: 获取本机外网 IP (不依赖特定客户端)
+# ──────────────────────────────────────────────────────────────────────────────
+get_public_ip() {
+    local ip=""
+    ip=$($HTTP_GET https://api.ipify.org 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$($HTTP_GET https://api64.ipify.org 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    echo "${ip:-127.0.0.1}"
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 功能1: Fail2ban SSH 防护
@@ -46,8 +84,7 @@ install_fail2ban_ssh() {
     # 自动检测管理员IP
     local admin_ip=""
     [ -n "$SSH_CONNECTION" ] && admin_ip=$(echo "$SSH_CONNECTION" | awk '{print $1}')
-    [ -z "$admin_ip" ] && admin_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
-    [ -z "$admin_ip" ] && admin_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+    [ -z "$admin_ip" ] && admin_ip=$(get_public_ip)
     log_info "检测到管理员IP: ${admin_ip}"
 
     # 检测 SSH 端口
@@ -114,8 +151,7 @@ install_fail2ban_rdp() {
     # 检测管理员IP
     local admin_ip=""
     [ -n "$SSH_CONNECTION" ] && admin_ip=$(echo "$SSH_CONNECTION" | awk '{print $1}')
-    [ -z "$admin_ip" ] && admin_ip=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null || true)
-    [ -z "$admin_ip" ] && admin_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+    [ -z "$admin_ip" ] && admin_ip=$(get_public_ip)
     log_info "检测到管理员IP: ${admin_ip}"
 
     # 检测 SSH 端口
@@ -291,7 +327,7 @@ show_menu() {
     clear
     echo -e "${CYAN}"
     echo '  ╔══════════════════════════════════════════╗'
-    echo '  ║       绝尘服务器安全工具集 v1.0          ║'
+    echo '  ║         绝尘盾 Server Shield v1.1        ║'
     echo '  ║     Server Security Tools by 绝尘AI      ║'
     echo '  ╚══════════════════════════════════════════╝'
     echo -e "${NC}"
