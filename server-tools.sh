@@ -737,7 +737,7 @@ fail2ban_whitelist() {
                         local updated_ignoreip="${cur_ignoreip} ${new_ip}"
                         # 用空格替换多个空格
                         updated_ignoreip=$(echo "$updated_ignoreip" | tr -s ' ')
-                        sed -i "s/^ignoreip = .*/ignoreip = ${updated_ignoreip}/" "$jail_cfg"
+                        sed -i "s|^ignoreip = .*|ignoreip = ${updated_ignoreip}|" "$jail_cfg"
                         log_success "${new_ip} 已加入白名单"
                         systemctl restart fail2ban
                     fi
@@ -760,7 +760,7 @@ fail2ban_whitelist() {
                         # 保留至少本地回环
                         updated_ignoreip="127.0.0.1/8 ::1"
                     fi
-                    sed -i "s/^ignoreip = .*/ignoreip = ${updated_ignoreip}/" "$jail_cfg"
+                    sed -i "s|^ignoreip = .*|ignoreip = ${updated_ignoreip}|" "$jail_cfg"
                     log_success "${del_ip} 已从白名单移除"
                     systemctl restart fail2ban
                 fi
@@ -775,7 +775,7 @@ fail2ban_whitelist() {
                     else
                         local updated_ignoreip="${cur_ignoreip} ${conn_ip}"
                         updated_ignoreip=$(echo "$updated_ignoreip" | tr -s ' ')
-                        sed -i "s/^ignoreip = .*/ignoreip = ${updated_ignoreip}/" "$jail_cfg"
+                        sed -i "s|^ignoreip = .*|ignoreip = ${updated_ignoreip}|" "$jail_cfg"
                         log_success "当前连接 IP ${conn_ip} 已加入白名单"
                         systemctl restart fail2ban
                     fi
@@ -791,7 +791,7 @@ fail2ban_whitelist() {
                     else
                         local updated_ignoreip="${cur_ignoreip} ${network}"
                         updated_ignoreip=$(echo "$updated_ignoreip" | tr -s ' ')
-                        sed -i "s/^ignoreip = .*/ignoreip = ${updated_ignoreip}/" "$jail_cfg"
+                        sed -i "s|^ignoreip = .*|ignoreip = ${updated_ignoreip}|" "$jail_cfg"
                         log_success "网段 ${network} 已加入白名单"
                         systemctl restart fail2ban
                     fi
