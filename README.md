@@ -29,6 +29,7 @@ apt-get update -qq && apt-get install -y -qq curl && bash <(curl -sL https://raw
 | 4 | ⚙️ Fail2ban 规则设置 | 修改封禁时长(bantime)、检测窗口(findtime)、失败阈值(maxretry)、启用/禁用 Jail |
 | 5 | 📋 Fail2ban 白名单管理 | 添加/移除 ignoreip，一键加入当前连接 IP |
 | 6 | 🚫 Fail2ban 黑名单管理 | 查看封禁详情、解封/封禁 IP、查看日志 |
+| 7 | 🔍 Fail2ban 状态诊断 | 服务/日志/配置一键体检，排查启动失败 |
 
 ## 单个脚本直链
 

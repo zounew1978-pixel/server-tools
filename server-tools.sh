@@ -256,9 +256,9 @@ install_fail2ban_ssh() {
     log_info "更新软件包列表..."
     apt-get update -qq
 
-    log_info "安装 fail2ban..."
-    apt-get install -y -qq fail2ban iptables-persistent netfilter-persistent 2>/dev/null || \
-    apt-get install -y -qq fail2ban
+    log_info "安装 fail2ban + python3-systemd (journald 后端)..."
+    apt-get install -y -qq fail2ban python3-systemd iptables-persistent netfilter-persistent 2>/dev/null || \
+    apt-get install -y -qq fail2ban python3-systemd
 
     local admin_ip=""
     [ -n "$SSH_CONNECTION" ] && admin_ip=$(echo "$SSH_CONNECTION" | awk '{print $1}')
@@ -281,19 +281,10 @@ banaction_allports = iptables-allports
 enabled = true
 port = ${ssh_port}
 filter = sshd
-logpath = /var/log/auth.log
+backend = systemd
 maxretry = 5
 bantime = 3600
 findtime = 600
-
-[sshd-dos]
-enabled = true
-port = ${ssh_port}
-filter = sshd
-logpath = /var/log/auth.log
-maxretry = 10
-bantime = 600
-findtime = 60
 
 [recidive]
 enabled = false
@@ -302,6 +293,8 @@ EOL
     # 设为开机自启并立即启动（兼容 systemd/sysvinit/容器）
     log_info "设置开机自启..."
     f2b_enable_service
+    log_info "确保日志文件存在..."
+    touch /var/log/auth.log 2>/dev/null || true
     log_info "启动 fail2ban 服务..."
     f2b_cmd restart
     sleep 2
@@ -332,9 +325,9 @@ install_fail2ban_rdp() {
     log_info "更新软件包列表..."
     apt-get update -qq
 
-    log_info "安装 fail2ban..."
-    apt-get install -y -qq fail2ban iptables-persistent netfilter-persistent 2>/dev/null || \
-    apt-get install -y -qq fail2ban
+    log_info "安装 fail2ban + python3-systemd (journald 后端)..."
+    apt-get install -y -qq fail2ban python3-systemd iptables-persistent netfilter-persistent 2>/dev/null || \
+    apt-get install -y -qq fail2ban python3-systemd
 
     local admin_ip=""
     [ -n "$SSH_CONNECTION" ] && admin_ip=$(echo "$SSH_CONNECTION" | awk '{print $1}')
@@ -346,6 +339,15 @@ install_fail2ban_rdp() {
 
     local rdp_port=$(detect_rdp_port)
     log_info "检测到 RDP 端口: ${rdp_port}"
+
+    # xrdp 检测：没装 xrdp 就降级为纯 SSH 防护
+    if ! command -v xrdp >/dev/null 2>&1 && [ ! -f /etc/xrdp/xrdp.ini ]; then
+        log_warn "未检测到 xrdp 服务，跳过 RDP 防护（降级为 SSH 防护）"
+        install_fail2ban_ssh
+        return
+    fi
+    # 确保 xrdp 日志文件存在，避免 fail2ban 启动失败
+    touch /var/log/xrdp.log 2>/dev/null || true
 
     cat > /etc/fail2ban/filter.d/xrdp.conf <<'EOL'
 [Definition]
@@ -369,19 +371,10 @@ banaction_allports = iptables-allports
 enabled = true
 port = ${ssh_port}
 filter = sshd
-logpath = /var/log/auth.log
+backend = systemd
 maxretry = 5
 bantime = 3600
 findtime = 600
-
-[sshd-dos]
-enabled = true
-port = ${ssh_port}
-filter = sshd
-logpath = /var/log/auth.log
-maxretry = 10
-bantime = 600
-findtime = 60
 
 [xrdp]
 enabled = true
@@ -399,6 +392,8 @@ EOL
     # 设为开机自启并立即启动（兼容 systemd/sysvinit/容器）
     log_info "设置开机自启..."
     f2b_enable_service
+    log_info "确保日志文件存在..."
+    touch /var/log/auth.log 2>/dev/null || true
     log_info "启动 fail2ban 服务..."
     f2b_cmd restart
     sleep 2
@@ -995,7 +990,7 @@ show_menu() {
     clear
     echo -e "${CYAN}"
     echo '  ╔══════════════════════════════════════════╗'
-    echo '  ║         绝尘盾 Server Shield v2.1        ║'
+    echo '  ║         绝尘盾 Server Shield v2.2        ║'
     echo '  ║     Server Security Tools by 绝尘AI      ║'
     echo '  ╚══════════════════════════════════════════╝'
     echo -e "${NC}"
