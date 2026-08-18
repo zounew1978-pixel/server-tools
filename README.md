@@ -23,9 +23,12 @@ apt-get update -qq && apt-get install -y -qq curl && bash <(curl -sL https://raw
 
 | 选项 | 功能 | 说明 |
 |------|------|------|
-| 1 | Fail2ban SSH 防护 | 5 次失败封 1 小时，自动白名单管理员 IP |
-| 2 | Fail2ban SSH + RDP 双防护 | 额外防护 xrdp 远程桌面爆破 |
-| 3 | iptables 端口管理 | 封锁/开放端口，raw 表拦截 Docker 流量 |
+| 1 | 🛡️ 安装 Fail2ban SSH 防护 | 5 次失败封 1 小时，自动白名单管理员 IP |
+| 2 | 🛡️ 安装 Fail2ban SSH+RDP 双防护 | 额外防护 xrdp 远程桌面爆破 |
+| 3 | 🔒 iptables 端口管理 | 封锁/开放端口，raw 表拦截 Docker 流量 |
+| 4 | ⚙️ Fail2ban 规则设置 | 修改封禁时长(bantime)、检测窗口(findtime)、失败阈值(maxretry)、启用/禁用 Jail |
+| 5 | 📋 Fail2ban 白名单管理 | 添加/移除 ignoreip，一键加入当前连接 IP |
+| 6 | 🚫 Fail2ban 黑名单管理 | 查看封禁详情、解封/封禁 IP、查看日志 |
 
 ## 单个脚本直链
 
@@ -50,6 +53,9 @@ bash <(curl -sL https://raw.githubusercontent.com/zounew1978-pixel/server-tools/
 - ✅ `recidive` 默认禁用，防止管理员被自己封禁
 - ✅ iptables raw 表 PREROUTING 拦截，在 Docker DNAT 之前生效
 - ✅ 纯净系统自动补装 curl，开箱即用
+- ✅ 规则配置：封禁时长 / 检测窗口 / 失败阈值 一键调整
+- ✅ 白名单：添加/移除 IP 或网段，自动加入当前连接 IP
+- ✅ 黑名单：查看封禁详情、解封指定 IP、一键清零
 
 ## 查看效果
 
@@ -63,4 +69,4 @@ fail2ban-client status xrdp
 脚本会在目标服务器上安装软件、修改防火墙规则。生产环境使用前请先在测试机验证。潜在封禁风险自负 —— 记得保留服务商控制台作为兜底 😎
 
 ---
-编写: 绝尘 (Hermes Agent) · v1.1 · 2026-08-18
+编写: 绝尘 (Hermes Agent) · v2.0 · 2026-08-18
