@@ -57,6 +57,105 @@ fi
 
 ensure_http_client
 
+# ── 服务管理：兼容 systemd / sysvinit / 容器环境 ──
+# 纯净 Debian 可能是容器（无 systemd 作为 PID 1），systemctl 命令会直接失败，
+# 因此先检测 PID 1 是否是 systemd，再决定用哪套服务管理工具。
+SYSTEMD_RUNNING=false
+if [ "$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')" = "systemd" ]; then
+    SYSTEMD_RUNNING=true
+fi
+
+# 通用的 fail2ban 服务控制命令
+f2b_cmd() {
+    local action="$1"  # start / stop / restart / status
+    if $SYSTEMD_RUNNING; then
+        systemctl "$action" fail2ban 2>&1
+    elif command -v service >/dev/null 2>&1; then
+        service fail2ban "$action" 2>&1
+    elif [ -x /etc/init.d/fail2ban ]; then
+        /etc/init.d/fail2ban "$action" 2>&1
+    else
+        echo "[ERROR] 找不到可用的服务管理工具 (systemctl/service/init.d)"
+        return 1
+    fi
+}
+
+# 检查 fail2ban 是否在运行（不依赖 systemd）
+f2b_is_active() {
+    if $SYSTEMD_RUNNING; then
+        systemctl is-active --quiet fail2ban 2>/dev/null
+    elif command -v pgrep >/dev/null 2>&1; then
+        pgrep -x fail2ban-server >/dev/null 2>&1 || pgrep -f "fail2ban-server" >/dev/null 2>&1
+    else
+        pidof fail2ban-server >/dev/null 2>&1
+    fi
+}
+
+# 设置开机自启（兼容 systemd / sysvinit / openrc）
+f2b_enable_service() {
+    if $SYSTEMD_RUNNING; then
+        systemctl enable fail2ban 2>&1 | grep -iv "^$" || true
+    elif command -v update-rc.d >/dev/null 2>&1; then
+        update-rc.d fail2ban enable >/dev/null 2>&1 && log_info "已通过 sysvinit 设置开机自启"
+    elif command -v rc-update >/dev/null 2>&1; then
+        rc-update add fail2ban default >/dev/null 2>&1 && log_info "已通过 openrc 设置开机自启"
+    else
+        log_warn "无法自动设置开机自启，请手动处理"
+    fi
+}
+
+# 完整诊断：服务状态 / 日志 / 配置
+f2b_diagnose() {
+    echo
+    log_info "① 系统信息"
+    echo -e "   主机名:   $(hostname)"
+    echo -e "   PID 1:    $(ps -p 1 -o comm= 2>/dev/null || echo '未知')"
+    echo -e "   系统:     $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
+    echo -e "   fail2ban: $(fail2ban-client version 2>/dev/null || echo '未安装')"
+    echo -e "   systemd 管理: $($SYSTEMD_RUNNING && echo '是 (PID1=systemd)' || echo '否 (使用 service/init.d)')"
+    echo
+    log_info "② 服务状态"
+    if $SYSTEMD_RUNNING; then
+        systemctl status fail2ban --no-pager 2>&1 | head -12
+        echo
+        echo -e "   开机自启: $(systemctl is-enabled fail2ban 2>&1 || true)"
+    else
+        f2b_cmd status 2>&1 | head -6
+        echo
+        if command -v ls >/dev/null 2>&1; then
+            echo -e "   sysvinit 自启链接: $(ls /etc/rc2.d/ 2>/dev/null | grep -i fail2ban || echo '无 (未设置开机自启)')"
+        fi
+    fi
+    echo
+    log_info "③ fail2ban 日志 (最近 15 行)"
+    if $SYSTEMD_RUNNING && command -v journalctl >/dev/null 2>&1; then
+        journalctl -u fail2ban -n 15 --no-pager 2>&1 | head -17 || true
+    fi
+    tail -15 /var/log/fail2ban.log 2>/dev/null || echo "   (无 /var/log/fail2ban.log)"
+    echo
+    log_info "④ jail.local 配置 (前 25 行)"
+    head -25 /etc/fail2ban/jail.local 2>/dev/null || echo "   (无 jail.local)"
+    echo
+    log_info "⑤ fail2ban-client 状态"
+    fail2ban-client status 2>&1 || true
+    echo
+    read -rp "按回车返回主菜单..."
+}
+
+# 安装后验证失败时的快速诊断
+f2b_diagnose_quick() {
+    echo
+    if $SYSTEMD_RUNNING; then
+        systemctl status fail2ban --no-pager 2>&1 | head -12
+    else
+        echo "   (非 systemd 系统) PID1=$(ps -p 1 -o comm= 2>/dev/null)，尝试 service/init.d 方式："
+        f2b_cmd status 2>&1 | head -6
+    fi
+    echo
+    echo -e "   日志尾部："
+    tail -10 /var/log/fail2ban.log 2>/dev/null || echo "   (无 /var/log/fail2ban.log)"
+}
+
 # ── 公共函数 ──
 
 get_public_ip() {
@@ -67,20 +166,28 @@ get_public_ip() {
     echo "${ip:-127.0.0.1}"
 }
 
-# 检查 fail2ban 是否已安装
+# 检查 fail2ban 是否已安装并运行
 check_f2b_installed() {
     if ! command -v fail2ban-client >/dev/null 2>&1; then
         log_error "Fail2ban 未安装！请先选「1」或「2」安装。"
         return 1
     fi
-    # 检查服务是否在运行
-    if ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+    # 检查服务是否在运行（兼容 systemd / sysvinit / 容器）
+    if ! f2b_is_active; then
         log_warn "Fail2ban 服务未运行，尝试启动..."
-        systemctl start fail2ban 2>/dev/null || {
-            log_error "Fail2ban 服务启动失败。"
+        f2b_cmd start || {
+            echo    # 换行
+            log_error "启动失败！以下为诊断信息："
+            f2b_diagnose_quick
+            log_error "请运行菜单 7「🔍 状态诊断」查看完整信息。"
             return 1
         }
         sleep 1
+        if ! f2b_is_active; then
+            log_error "启动后服务仍未运行！请运行菜单 7「🔍 状态诊断」查看原因。"
+            return 1
+        fi
+        log_success "服务启动成功 ✓"
     fi
     return 0
 }
@@ -192,12 +299,21 @@ findtime = 60
 enabled = false
 EOL
 
-    # 设为开机自启并立即启动
-    systemctl enable fail2ban 2>/dev/null || true
-    systemctl restart fail2ban 2>/dev/null || true
+    # 设为开机自启并立即启动（兼容 systemd/sysvinit/容器）
+    log_info "设置开机自启..."
+    f2b_enable_service
+    log_info "启动 fail2ban 服务..."
+    f2b_cmd restart
     sleep 2
 
     log_success "Fail2ban SSH 防护安装完成！"
+    if f2b_is_active; then
+        log_success "服务状态: 运行中 ✓（开机自启已配置）"
+    else
+        log_warn "服务未运行！快速诊断："
+        f2b_diagnose_quick
+        log_warn "可稍后运行菜单 7「🔍 状态诊断」查看完整信息。"
+    fi
     echo -e "  ${GREEN}✓${NC} 管理员 IP 白名单: ${admin_ip}"
     echo -e "  ${GREEN}✓${NC} SSH 端口: ${ssh_port}"
     echo -e "  ${GREEN}✓${NC} 5 次失败 → 封 1 小时"
@@ -280,12 +396,21 @@ findtime = 600
 enabled = false
 EOL
 
-    # 设为开机自启并立即启动
-    systemctl enable fail2ban 2>/dev/null || true
-    systemctl restart fail2ban 2>/dev/null || true
+    # 设为开机自启并立即启动（兼容 systemd/sysvinit/容器）
+    log_info "设置开机自启..."
+    f2b_enable_service
+    log_info "启动 fail2ban 服务..."
+    f2b_cmd restart
     sleep 2
 
     log_success "Fail2ban SSH+RDP 双防护安装完成！"
+    if f2b_is_active; then
+        log_success "服务状态: 运行中 ✓（开机自启已配置）"
+    else
+        log_warn "服务未运行！快速诊断："
+        f2b_diagnose_quick
+        log_warn "可稍后运行菜单 7「🔍 状态诊断」查看完整信息。"
+    fi
     echo -e "  ${GREEN}✓${NC} 管理员 IP 白名单: ${admin_ip}"
     echo -e "  ${GREEN}✓${NC} SSH 端口: ${ssh_port}"
     echo -e "  ${GREEN}✓${NC} RDP 端口: ${rdp_port}"
@@ -870,7 +995,7 @@ show_menu() {
     clear
     echo -e "${CYAN}"
     echo '  ╔══════════════════════════════════════════╗'
-    echo '  ║         绝尘盾 Server Shield v2.0        ║'
+    echo '  ║         绝尘盾 Server Shield v2.1        ║'
     echo '  ║     Server Security Tools by 绝尘AI      ║'
     echo '  ╚══════════════════════════════════════════╝'
     echo -e "${NC}"
@@ -881,8 +1006,9 @@ show_menu() {
     echo -e "  ${CYAN}4${NC}) ⚙️   Fail2ban 规则设置（bantime/findtime/maxretry）"
     echo -e "  ${CYAN}5${NC}) 📋  Fail2ban 白名单管理（ignoreip）"
     echo -e "  ${CYAN}6${NC}) 🚫  Fail2ban 黑名单管理（封禁/解封）"
+    echo -e "  ${CYAN}7${NC}) 🔍  Fail2ban 状态诊断（服务/日志/配置）"
     echo -e "  ${CYAN}0${NC}) ❌  退出\n"
-    echo -n -e "${BOLD}请输入 [0-6]: ${NC}"
+    echo -n -e "${BOLD}请输入 [0-7]: ${NC}"
     read -r choice
     echo
 
@@ -893,6 +1019,7 @@ show_menu() {
         4) fail2ban_rule_config ;;
         5) fail2ban_whitelist ;;
         6) fail2ban_blacklist ;;
+        7) f2b_diagnose ;;
         0)
             echo -e "${GREEN}已退出。保重！${NC}"
             exit 0
