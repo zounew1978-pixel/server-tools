@@ -8,7 +8,8 @@
 # 编写: 绝尘 (Hermes Agent)
 # 版本: v2.0 — 2026-08-18 (规则+白名单+黑名单管理)
 # ==============================================================================
-set -eo pipefail
+# 交互菜单脚本不启用 set -e（任何子命令失败会导致整个脚本退出）
+set -o pipefail
 
 # ── 颜色定义 ──
 RED='\033[0;31m'
@@ -89,14 +90,14 @@ get_jail_cfg() {
     local key="$1"
     local jail="${2:-DEFAULT}"
     if [ "$jail" = "DEFAULT" ]; then
-        grep -i "^${key}=" /etc/fail2ban/jail.local 2>/dev/null | head -1 | cut -d= -f2 | xargs
+        grep -i "^${key}[[:space:]]*=" /etc/fail2ban/jail.local 2>/dev/null | head -1 | cut -d= -f2- | xargs
     else
         # 在特定 jail 段内查找
-        awk -v j="[${jail}]" -v k="^${key}=" '
+        awk -v j="[${jail}]" -v k="^${key}[[:space:]]*=" '
             $0 ~ j { found=1; next }
             /^\[.*\]/ { found=0 }
             found && $0 ~ k { print; exit }
-        ' /etc/fail2ban/jail.local 2>/dev/null | cut -d= -f2 | xargs
+        ' /etc/fail2ban/jail.local 2>/dev/null | cut -d= -f2- | xargs
     fi
 }
 
@@ -191,6 +192,8 @@ findtime = 60
 enabled = false
 EOL
 
+    # 设为开机自启并立即启动
+    systemctl enable fail2ban 2>/dev/null || true
     systemctl restart fail2ban 2>/dev/null || true
     sleep 2
 
@@ -277,6 +280,8 @@ findtime = 600
 enabled = false
 EOL
 
+    # 设为开机自启并立即启动
+    systemctl enable fail2ban 2>/dev/null || true
     systemctl restart fail2ban 2>/dev/null || true
     sleep 2
 
