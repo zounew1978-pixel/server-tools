@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 绝尘盾 (Server Shield) v2.0 — 服务器安全工具集
+# 绝尘盾 (Server Shield) v2.3 — 服务器安全工具集
 # 一键装载：Fail2ban 防护 + iptables 端口管理 + 规则/白名单/黑名单管理
 # 用法: bash <(curl -sL https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
 # 或:   bash <(wget -qO- https://raw.githubusercontent.com/zounew1978-pixel/server-tools/main/server-tools.sh)
 # 纯Debian(无curl/wget): apt-get update -qq && apt-get install -y -qq curl && bash <(curl -sL ...)
 # 编写: 绝尘 (Hermes Agent)
-# 版本: v2.0 — 2026-08-18 (规则+白名单+黑名单管理)
+# 版本: v2.3 — 2026-08-31 (修复: docker端口封锁误杀NPM反代内部流量)
 # ==============================================================================
 # 交互菜单脚本不启用 set -e（任何子命令失败会导致整个脚本退出）
 set -o pipefail
@@ -469,10 +469,25 @@ port_block_manager() {
                             [[ "$confirm" != "y" && "$confirm" != "Y" ]] && continue 2
                         fi
                     done
-                    iptables -t raw -C PREROUTING -p tcp --dport "$port" -j DROP 2>/dev/null && \
-                        log_warn "端口 ${port} 已封锁，跳过" || \
+                    # 检测 Docker 映射端口并提醒（防止误封容器外部访问）
+                    local docker_ports
+                    docker_ports=$(docker ps --format '{{.Ports}}' 2>/dev/null | grep -oE '[0-9]+->' | sed 's/->//' | sort -u | tr '\n' ' ')
+                    if echo "$docker_ports" | grep -qw "$port"; then
+                        log_warn "⚠️  ${port} 是 Docker 映射端口，封锁后外部直连失效（本机/NPM 反代内部流量不受影响）"
+                        read -rp "确认封锁？(y/N): " confirm_docker
+                        [[ "$confirm_docker" != "y" && "$confirm_docker" != "Y" ]] && continue 2
+                    fi
+                    # 兼容清理：移除旧版(无内部放行)的同端口规则，避免重复叠加
+                    iptables -t raw -D PREROUTING -p tcp --dport "$port" -j DROP 2>/dev/null
+                    # 封锁方案：先 ACCEPT 放行内部来源(docker0容器网桥/lo本机回环)，再 DROP 封外部直连
+                    # 顺序关键：ACCEPT 必须在 DROP 之前，否则内部反代流量会被误杀
+                    iptables -t raw -C PREROUTING -i docker0 -p tcp --dport "$port" -j ACCEPT 2>/dev/null || \
+                        iptables -t raw -A PREROUTING -i docker0 -p tcp --dport "$port" -j ACCEPT
+                    iptables -t raw -C PREROUTING -i lo -p tcp --dport "$port" -j ACCEPT 2>/dev/null || \
+                        iptables -t raw -A PREROUTING -i lo -p tcp --dport "$port" -j ACCEPT
+                    iptables -t raw -C PREROUTING -p tcp --dport "$port" -j DROP 2>/dev/null || \
                         { iptables -t raw -A PREROUTING -p tcp --dport "$port" -j DROP && \
-                          log_success "端口 ${port} 已封锁（外部访问）"; }
+                          log_success "端口 ${port} 已封锁（外部直连，内部反代不受影响）"; }
                     netfilter-persistent save 2>/dev/null || true
                 else
                     log_error "无效端口号"
@@ -481,8 +496,18 @@ port_block_manager() {
             2)
                 read -rp "输入要开放的端口号: " port
                 if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+                    # 兼容：同时清理新版(ACCEPT内部放行 + DROP)与旧版(仅DROP)规则
+                    local removed=0
+                    # 新版内部放行规则 (docker0/lo ACCEPT)
+                    iptables -t raw -C PREROUTING -i docker0 -p tcp --dport "$port" -j ACCEPT 2>/dev/null && \
+                        iptables -t raw -D PREROUTING -i docker0 -p tcp --dport "$port" -j ACCEPT 2>/dev/null && removed=1
+                    iptables -t raw -C PREROUTING -i lo -p tcp --dport "$port" -j ACCEPT 2>/dev/null && \
+                        iptables -t raw -D PREROUTING -i lo -p tcp --dport "$port" -j ACCEPT 2>/dev/null && removed=1
+                    # 新版+旧版通用的 DROP 规则
                     if iptables -t raw -C PREROUTING -p tcp --dport "$port" -j DROP 2>/dev/null; then
-                        iptables -t raw -D PREROUTING -p tcp --dport "$port" -j DROP && \
+                        iptables -t raw -D PREROUTING -p tcp --dport "$port" -j DROP 2>/dev/null && removed=1
+                    fi
+                    if [ "$removed" -eq 1 ]; then
                         log_success "端口 ${port} 已开放"
                         netfilter-persistent save 2>/dev/null || true
                     else
@@ -990,7 +1015,7 @@ show_menu() {
     clear
     echo -e "${CYAN}"
     echo '  ╔══════════════════════════════════════════╗'
-    echo '  ║         绝尘盾 Server Shield v2.2        ║'
+    echo -e "  ║         绝尘盾 Server Shield v2.3        ║"
     echo '  ║     Server Security Tools by 绝尘AI      ║'
     echo '  ╚══════════════════════════════════════════╝'
     echo -e "${NC}"
