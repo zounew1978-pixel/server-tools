@@ -268,9 +268,15 @@ install_fail2ban_ssh() {
     local ssh_port=$(detect_ssh_port)
     log_info "检测到 SSH 端口: ${ssh_port}"
 
+    # 本机公网IP也加入白名单，防止本机进程回连自己触发误封（2026-09-01 修复：144.24.79.9 曾因此被自封）
+    local public_ip=$(get_public_ip)
+    local ignore_ips="127.0.0.1/8 ::1 ${admin_ip}"
+    [ -n "$public_ip" ] && [ "$public_ip" != "127.0.0.1" ] && [ "$public_ip" != "$admin_ip" ] && ignore_ips="${ignore_ips} ${public_ip}"
+    log_info "白名单: ${ignore_ips}"
+
     cat > /etc/fail2ban/jail.local <<EOL
 [DEFAULT]
-ignoreip = 127.0.0.1/8 ::1 ${admin_ip}
+ignoreip = ${ignore_ips}
 bantime = 3600
 findtime = 600
 maxretry = 5
@@ -340,6 +346,12 @@ install_fail2ban_rdp() {
     local rdp_port=$(detect_rdp_port)
     log_info "检测到 RDP 端口: ${rdp_port}"
 
+    # 本机公网IP也加入白名单，防止本机进程回连自己触发误封（2026-09-01 修复：144.24.79.9 曾因此被自封）
+    local public_ip=$(get_public_ip)
+    local ignore_ips="127.0.0.1/8 ::1 ${admin_ip}"
+    [ -n "$public_ip" ] && [ "$public_ip" != "127.0.0.1" ] && [ "$public_ip" != "$admin_ip" ] && ignore_ips="${ignore_ips} ${public_ip}"
+    log_info "白名单: ${ignore_ips}"
+
     # xrdp 检测：没装 xrdp 就降级为纯 SSH 防护
     if ! command -v xrdp >/dev/null 2>&1 && [ ! -f /etc/xrdp/xrdp.ini ]; then
         log_warn "未检测到 xrdp 服务，跳过 RDP 防护（降级为 SSH 防护）"
@@ -349,18 +361,34 @@ install_fail2ban_rdp() {
     # 确保 xrdp 日志文件存在，避免 fail2ban 启动失败
     touch /var/log/xrdp.log 2>/dev/null || true
 
+    # xrdp filter: 匹配 auth.log 中 xrdp-sesexec 的 PAM 认证失败行（含 <HOST>）。
+    # 2026-09-01 修复：旧版正则缺 <HOST> 且格式错误，fail2ban 1.1.0 启动校验直接拒启。
     cat > /etc/fail2ban/filter.d/xrdp.conf <<'EOL'
+# Fail2Ban filter for XRDP
+# 匹配 auth.log 中 xrdp PAM 认证失败（与系统 pam-generic 结构一致）
+# 真实样例:
+#   localhost xrdp-sesexec[123]: pam_unix(xrdp-sesman:auth): authentication failure; logname= uid=0 euid=0 tty=xrdp-sesman ruser= rhost=::ffff:1.2.3.4  user=zou
+
+[INCLUDES]
+before = common.conf
+
+[DEFAULT]
+_ttys_re = \S+
+
 [Definition]
-failregex = ^\[INFO\] Socket \d+: Connection from \S+ port \d+ to port \d+$
-            ^\[ERROR\] recv\(sess\) failed for \S+:\d+: Connection reset by peer$
-            ^\[ERROR\] xrdp: process \d+ exiting with signal \d+$
-            ^\[WARN\] libxrdp connection rejected from \S+:\d+$
+
+prefregex = ^%(__prefix_line)spam_unix\(xrdp-sesman:auth\):\s+authentication failure;(?:\s+(?:(?:logname|e?uid)=\S*)){0,3} tty=%(_ttys_re)s <F-CONTENT>.+</F-CONTENT>$
+
+failregex = ^ruser=<F-ALT_USER>(?:\S*|.*?)</F-ALT_USER> rhost=<HOST>(?:\s+user=<F-USER>(?:\S*|.*?)</F-USER>)?\s*$
+
 ignoreregex =
+
+datepattern = {^LN-BEG}
 EOL
 
     cat > /etc/fail2ban/jail.local <<EOL
 [DEFAULT]
-ignoreip = 127.0.0.1/8 ::1 ${admin_ip}
+ignoreip = ${ignore_ips}
 bantime = 3600
 findtime = 600
 maxretry = 5
@@ -380,7 +408,7 @@ findtime = 600
 enabled = true
 port = ${rdp_port}
 filter = xrdp
-logpath = /var/log/xrdp.log
+logpath = /var/log/auth.log
 maxretry = 5
 bantime = 3600
 findtime = 600

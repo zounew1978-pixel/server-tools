@@ -31,8 +31,9 @@ detect_admin_ip() {
     local ips=""
     
     # 方法1: SSH_CONNECTION（通过SSH连接时）
+    # 格式: <客户端IP> <客户端端口> <服务端IP> <服务端端口>，取第1个字段才是客户端(管理员)IP
     if [ -n "$SSH_CONNECTION" ]; then
-        ips=$(echo "$SSH_CONNECTION" | awk '{print $3}')
+        ips=$(echo "$SSH_CONNECTION" | awk '{print $1}')
     fi
     
     # 方法2: 本机外网IP（curl/wget 自适应）
@@ -92,10 +93,10 @@ fi
 # 3. 检测端口
 # ------------------------------------------------------------------------------
 SSH_PORT=$(grep -h -i -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}' | tail -n 1 || echo "22")
-XRD P_PORT=$(ss -tlnp 2>/dev/null | grep 'xrdp' | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1 || echo "3389")
+XRDP_PORT=$(ss -tlnp 2>/dev/null | grep 'xrdp' | awk '{print $4}' | awk -F':' '{print $NF}' | head -n 1 || echo "3389")
 
 log_info "检测到 SSH 端口: ${SSH_PORT}"
-log_info "检测到 XRDP 端口: ${XRP P_PORT}"
+log_info "检测到 XRDP 端口: ${XRDP_PORT}"
 
 # ------------------------------------------------------------------------------
 # 4. 检查现有安装
@@ -124,12 +125,34 @@ log_info "生成 Fail2ban 配置文件..."
 
 mkdir -p /etc/fail2ban/jail.d
 
+# 写 xrdp filter（Debian/Ubuntu 的 fail2ban 包不自带，必须手动创建，否则 xrdp jail 启动失败）
+# 匹配 auth.log 中 xrdp-sesexec 的 PAM 认证失败行（含 <HOST>）
+cat <<'EOF' > /etc/fail2ban/filter.d/xrdp.conf
+# Fail2Ban filter for XRDP
+# 匹配 auth.log 中 xrdp PAM 认证失败（与系统 pam-generic 结构一致）
+
+[INCLUDES]
+before = common.conf
+
+[DEFAULT]
+_ttys_re = \S+
+
+[Definition]
+
+prefregex = ^%(__prefix_line)spam_unix\(xrdp-sesman:auth\):\s+authentication failure;(?:\s+(?:(?:logname|e?uid)=\S*)){0,3} tty=%(_ttys_re)s <F-CONTENT>.+</F-CONTENT>$
+
+failregex = ^ruser=<F-ALT_USER>(?:\S*|.*?)</F-ALT_USER> rhost=<HOST>(?:\s+user=<F-USER>(?:\S*|.*?)</F-USER>)?\s*$
+
+ignoreregex =
+
+datepattern = {^LN-BEG}
+EOF
+
 # 主配置
 cat <<EOF > /etc/fail2ban/jail.local
 [DEFAULT]
 # 忽略的IP（管理员白名单）
 ignoreip = 127.0.0.0/8 ::1 ${ADMIN_IP}
-           2603:c024:2:e700:99a5:5100:9e26:8929/128
 
 # 默认封禁动作
 banaction = iptables-allports
@@ -146,7 +169,7 @@ findtime = 600       # 10分钟窗口
 
 [xrdp]
 enabled  = true
-port     = ${XRP P_PORT}
+port     = ${XRDP_PORT}
 filter   = xrdp
 logpath  = /var/log/auth.log
 maxretry = 3
@@ -219,7 +242,7 @@ fail2ban-client get sshd ignoreip 2>/dev/null || echo "无法获取"
 # ------------------------------------------------------------------------------
 # 9. 生成报告
 # ------------------------------------------------------------------------------
-local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
 cat <<EOF
 
@@ -230,7 +253,7 @@ cat <<EOF
 
 ✅ 已完成的配置:
    - SSH 端口: ${SSH_PORT}
-   - XRDP 端口: ${XRP P_PORT}
+   - XRDP 端口: ${XRDP_PORT}
    - 封禁时长: 1小时
    - 失败阈值: SSH 5次 / XRDP 3次
    - 管理员IP: ${ADMIN_IP}
