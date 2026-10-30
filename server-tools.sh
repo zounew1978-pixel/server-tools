@@ -234,7 +234,10 @@ get_enabled_jails() {
 # 检测 SSH 端口
 detect_ssh_port() {
     local port
-    port=$(grep -i "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
+    # 优先用 sshd -T 读取生效配置（含 sshd_config.d/ 下的 Include）
+    port=$( (sshd -T 2>/dev/null || /usr/sbin/sshd -T 2>/dev/null) | awk '/^port /{print $2; exit}')
+    # 回退: 同时扫描 sshd_config 与 sshd_config.d/*.conf
+    [ -z "$port" ] && port=$(grep -h -i -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}' | head -1)
     echo "${port:-22}"
 }
 
@@ -454,8 +457,9 @@ port_block_manager() {
     detect_ssh_ports() {
         local ports=()
         local cfg_port
-        cfg_port=$(grep -i "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
-        [ -n "$cfg_port" ] && ports+=("$cfg_port")
+        while IFS= read -r cfg_port; do
+            [ -n "$cfg_port" ] && ports+=("$cfg_port")
+        done < <( (sshd -T 2>/dev/null || /usr/sbin/sshd -T 2>/dev/null) | awk '/^port /{print $2}'; grep -h -i -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}')
         while IFS= read -r p; do
             [ -n "$p" ] && ports+=("$p")
         done < <(ss -tlnp 2>/dev/null | grep "sshd" | awk '{print $4}' | rev | cut -d: -f1 | rev | sort -u)
